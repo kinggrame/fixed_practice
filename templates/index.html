@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>智慧眼 · 识物相机管理后台</title>
+  <link rel="stylesheet" href="/static/css/app.css" />
+</head>
+<body>
+  <div id="app">
+    <!-- 顶栏 -->
+    <header class="topbar">
+      <div class="brand">
+        <span class="logo">●</span>
+        <span class="title">智慧眼 · Wise Eye</span>
+        <span class="subtitle">边缘识物相机管理后台</span>
+      </div>
+      <div class="topbar-right">
+        <span class="conn-dot" :class="online ? 'on' : 'off'"></span>
+        <span class="conn-text">{{ online ? '在线' : '离线' }}</span>
+        <span class="ts">{{ now }}</span>
+      </div>
+    </header>
+
+    <div class="layout">
+      <!-- 侧边导航 -->
+      <nav class="sidebar">
+        <button v-for="t in tabs" :key="t.key"
+                :class="['nav-item', { active: tab === t.key }]"
+                @click="tab = t.key">
+          <span class="ico">{{ t.icon }}</span>
+          <span class="lbl">{{ t.label }}</span>
+        </button>
+        <div class="spacer"></div>
+        <div class="version">v1.0 · 1GB Pi</div>
+      </nav>
+
+      <!-- 主体内容 -->
+      <main class="main">
+        <!-- ========== Dashboard ========== -->
+        <section v-show="tab === 'dashboard'" class="panel">
+          <div class="panel-head">
+            <h2>实时状态</h2>
+            <button class="btn primary" :disabled="!canTrigger" @click="trigger">
+              {{ canTrigger ? '手动触发识别' : '忙: ' + state.state }}
+            </button>
+          </div>
+
+          <div class="grid-2">
+            <div class="card">
+              <div class="card-title">状态机</div>
+              <div class="state-big" :class="stateClass">
+                {{ stateLabel }}
+              </div>
+              <div class="kv">
+                <div><span>环境模式</span><b :class="state.mode === 'NIGHT' ? 'warn' : 'ok'">{{ state.mode || '--' }}</b></div>
+                <div><span>错误</span><b class="err">{{ state.error_msg || '无' }}</b></div>
+                <div><span>最近更新</span><b>{{ formatTime(state.last_update) }}</b></div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-title">最近一次识别</div>
+              <div class="result-name">{{ state.last_object_name || '—' }}</div>
+              <div class="result-cat">分类: {{ state.last_category || '—' }}</div>
+              <div class="kv">
+                <div><span>延迟</span><b>{{ state.last_latency_ms }} ms</b></div>
+                <div><span>图像</span>
+                  <b v-if="state.last_image_id">
+                    <a :href="`/api/images/${state.last_image_id}/file`" target="_blank">查看</a>
+                  </b>
+                  <b v-else>未保存</b>
+                </div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-title">累计统计</div>
+              <div class="stat-row">
+                <div class="stat"><div class="num">{{ state.capture_total || 0 }}</div><div class="lbl">总触发</div></div>
+                <div class="stat ok"><div class="num">{{ state.capture_success || 0 }}</div><div class="lbl">成功</div></div>
+                <div class="stat err"><div class="num">{{ state.capture_error || 0 }}</div><div class="lbl">失败</div></div>
+              </div>
+              <div class="kv">
+                <div><span>图库总数</span><b>{{ state.stats && state.stats.total || 0 }}</b></div>
+                <div><span>图库成功</span><b class="ok">{{ state.stats && state.stats.success || 0 }}</b></div>
+                <div><span>图库失败</span><b class="err">{{ state.stats && state.stats.error || 0 }}</b></div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-title">当前策略</div>
+              <div class="kv">
+                <div><span>光敏</span><b>{{ cfg.light_policy }}</b></div>
+                <div><span>去抖</span><b>{{ cfg.light_debounce_ms }} ms</b></div>
+                <div><span>增强</span><b>{{ cfg.enhancement_mode }}</b></div>
+                <div><span>保存图像</span><b>{{ cfg.save_image ? '是' : '否' }}</b></div>
+                <div><span>模型</span><b>{{ cfg.vlm_model }}</b></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ========== Gallery ========== -->
+        <section v-show="tab === 'gallery'" class="panel">
+          <div class="panel-head">
+            <h2>历史图库</h2>
+            <div class="head-tools">
+              <select v-model="galleryStatus" @change="reloadGallery">
+                <option value="">全部</option>
+                <option value="success">成功</option>
+                <option value="error">失败</option>
+                <option value="pending">进行中</option>
+              </select>
+              <button class="btn" @click="reloadGallery">刷新</button>
+            </div>
+          </div>
+
+          <div v-if="gallery.items.length === 0" class="empty">
+            暂无图像,等待红外触发或点击「手动触发识别」
+          </div>
+
+          <div v-else class="gallery">
+            <div v-for="img in gallery.items" :key="img.id" class="gcard"
+                 @click="openImage(img)">
+              <div class="gthumb">
+                <img :src="img.url + '?t=' + img.timestamp" loading="lazy" alt="thumb" />
+                <span class="badge" :class="img.mode === 'NIGHT' ? 'warn' : 'ok'">{{ img.mode }}</span>
+                <span class="badge status" :class="img.status">{{ img.status }}</span>
+              </div>
+              <div class="ginfo">
+                <div class="gname">{{ img.object_name || '—' }}</div>
+                <div class="gcat">{{ img.category || '—' }}</div>
+                <div class="gmeta">{{ formatTime(img.timestamp) }} · {{ img.latency_ms || 0 }}ms</div>
+              </div>
+              <button class="del" title="删除" @click.stop="delImage(img)">×</button>
+            </div>
+          </div>
+
+          <div v-if="gallery.items.length > 0" class="pager">
+            <span>共 {{ gallery.total }} 条 · 第 {{ gallery.page }} 页</span>
+            <button class="btn" :disabled="gallery.page <= 1" @click="loadPage(gallery.page - 1)">上一页</button>
+            <button class="btn" :disabled="gallery.page * gallery.per_page >= gallery.total"
+                    @click="loadPage(gallery.page + 1)">下一页</button>
+          </div>
+        </section>
+
+        <!-- ========== Config ========== -->
+        <section v-show="tab === 'config'" class="panel">
+          <div class="panel-head">
+            <h2>运行配置</h2>
+            <div class="head-tools">
+              <button class="btn" @click="loadConfig">放弃修改</button>
+              <button class="btn primary" @click="saveConfig">保存 (热生效)</button>
+            </div>
+          </div>
+
+          <div class="form">
+            <fieldset>
+              <legend>光敏策略 (阈值在硬件电位器调节)</legend>
+              <div class="row">
+                <label>光敏模式</label>
+                <select v-model="cfg.light_policy">
+                  <option value="AUTO">AUTO (读取 DO 电平)</option>
+                  <option value="FORCE_DAY">FORCE_DAY (强制白天)</option>
+                  <option value="FORCE_NIGHT">FORCE_NIGHT (强制黑夜)</option>
+                </select>
+              </div>
+              <div class="row">
+                <label>去抖窗口</label>
+                <input type="number" v-model.number="cfg.light_debounce_ms" min="0" step="50" />
+                <span class="hint">毫秒。临界光线下防止 DAY/NIGHT 反复切换 (多数表决)</span>
+              </div>
+            </fieldset>
+
+            <fieldset>
+              <legend>图像增强</legend>
+              <div class="row">
+                <label>增强档位</label>
+                <select v-model="cfg.enhancement_mode">
+                  <option value="AUTO">AUTO (白天=降噪, 黑夜=降噪+Gamma)</option>
+                  <option value="DAY">DAY (始终仅高斯降噪)</option>
+                  <option value="NIGHT">NIGHT (始终 Gamma 0.5 调亮)</option>
+                  <option value="OFF">OFF (关闭增强)</option>
+                </select>
+              </div>
+              <div class="row">
+                <label>保存图像</label>
+                <label class="switch">
+                  <input type="checkbox" v-model="cfg.save_image" />
+                  <span>{{ cfg.save_image ? '是' : '否' }}</span>
+                </label>
+                <span class="hint">关闭后,图库不再记录本次抓拍</span>
+              </div>
+            </fieldset>
+
+            <fieldset>
+              <legend>云端 VLM (默认 Qwen-VL-Plus)</legend>
+              <div class="row">
+                <label>API Base</label>
+                <input type="text" v-model="cfg.vlm_api_base" placeholder="https://dashscope.aliyuncs.com/compatible-mode/v1" />
+              </div>
+              <div class="row">
+                <label>API Key</label>
+                <input type="password" v-model="cfg.vlm_api_key" placeholder="sk-..." />
+              </div>
+              <div class="row">
+                <label>模型名</label>
+                <input type="text" v-model="cfg.vlm_model" placeholder="qwen-vl-plus" />
+                <span class="hint">通义: qwen-vl-plus / qwen3-vl-plus · 智谱: glm-4v-plus · OpenAI: gpt-4o-mini</span>
+              </div>
+            </fieldset>
+          </div>
+        </section>
+
+        <!-- ========== Logs ========== -->
+        <section v-show="tab === 'logs'" class="panel">
+          <div class="panel-head">
+            <h2>实时日志</h2>
+            <div class="head-tools">
+              <label class="switch">
+                <input type="checkbox" v-model="logAuto" />
+                <span>{{ logAuto ? '自动滚动' : '暂停滚动' }}</span>
+              </label>
+              <button class="btn" @click="logLines = []">清屏</button>
+            </div>
+          </div>
+          <div class="logbox" ref="logbox">
+            <div v-if="logLines.length === 0" class="empty">暂无日志</div>
+            <div v-for="(l, i) in logLines" :key="i" :class="['logline', 'lvl-' + l.level]">
+              <span class="lt">{{ l.t }}</span>
+              <span class="lv">{{ l.level }}</span>
+              <span class="lm">{{ l.msg }}</span>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <!-- 图片大图 Modal -->
+    <div v-if="modal" class="modal" @click.self="modal = null">
+      <div class="modal-body">
+        <button class="modal-close" @click="modal = null">×</button>
+        <img :src="modal.url" alt="full" />
+        <div class="modal-info">
+          <div class="rname">{{ modal.object_name || '—' }}</div>
+          <div class="rcat">分类: {{ modal.category || '—' }}</div>
+          <div class="kv">
+            <div><span>时间</span><b>{{ formatTime(modal.timestamp) }}</b></div>
+            <div><span>模式</span><b>{{ modal.mode }}</b></div>
+            <div><span>状态</span><b>{{ modal.status }}</b></div>
+            <div><span>大小</span><b>{{ (modal.file_size / 1024).toFixed(1) }} KB</b></div>
+            <div><span>延迟</span><b>{{ modal.latency_ms || 0 }} ms</b></div>
+          </div>
+          <button class="btn danger" @click="delImage(modal, true)">删除此条</button>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="toast" class="toast" :class="toast.type">{{ toast.msg }}</div>
+  </div>
+
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+  <script src="/static/js/app.js"></script>
+</body>
+</html>

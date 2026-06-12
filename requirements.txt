@@ -1,0 +1,5 @@
+luma.oled>=3.13.0
+Pillow>=9.0.0
+RPi.GPIO>=0.7.0
+requests>=2.28.0
+Flask>=2.2.0
