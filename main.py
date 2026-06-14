@@ -317,8 +317,13 @@ class WiseEyeStateMachine:
         self.gpio.play_melody("success")
         for jpg in jpegs:
             del jpg
-        time.sleep(config.DISPLAY_HOLD_SEC)
-        self._cooldown_until = time.time() + 0.5
+        # DISPLAY 阶段: 短轮询,新 IR 可打断
+        for _ in range(int(config.DISPLAY_HOLD_SEC * 10)):
+            if self.gpio.poll_ir():
+                self._capture_one(source="IR")
+                break
+            time.sleep(0.1)
+        self._cooldown_until = time.time() + 0.3
 
     # ----- ERROR -----
     def _go_error(self, msg: str):
