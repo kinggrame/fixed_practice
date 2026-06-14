@@ -93,7 +93,7 @@ def _draw_hr(draw, y):
 
 
 # ----------------------------------------------------------------------
-# 3. 六个状态屏
+# 3. 屏幕函数
 # ----------------------------------------------------------------------
 def show_ready():
     def _draw(draw, fs, fb):
@@ -103,6 +103,27 @@ def show_ready():
         draw.text((0, 36), "near the camera...", font=fs, fill=1)
         draw.text((0, 52), time.strftime("%H:%M:%S"), font=fs, fill=1)
     _gui(_draw)
+
+
+def show_countdown(seconds_left: int, total: int = 5):
+    """倒计时显示,每 5→4→3→2→1 调用一次。"""
+    dev = get_device()
+    if dev is None:
+        return
+    font_s, font_b = get_fonts()
+    try:
+        canvas_fn = get_device._luma_canvas
+        with canvas_fn(dev) as draw:
+            draw.text((0, 2), "[ COUNTDOWN ]", font=font_s, fill=1)
+            _draw_hr(draw, 14)
+            n_text = str(seconds_left)
+            bbox = draw.textbbox((0, 0), n_text, font=font_b)
+            x = (config.OLED_WIDTH - (bbox[2] - bbox[0])) // 2
+            y = 22
+            draw.text((x, y), n_text, font=font_b, fill=1)
+            draw.text((0, 52), f"Capture in {seconds_left}s", font=font_s, fill=1)
+    except Exception:
+        pass
 
 
 def show_capture(mode: str):

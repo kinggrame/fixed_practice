@@ -81,10 +81,10 @@ IMAGE_RETENTION_MAX = int(os.getenv("IMAGE_RETENTION_MAX", "500"))
 # ----------------------------------------------------------------------
 # 也可换成: 智谱 GLM-4V / OpenAI gpt-4o-mini / 月之暗面 等兼容服务
 VLM_API_BASE = os.getenv("VLM_API_BASE", "https://dashscope.aliyuncs.com/compatible-mode/v1")
-VLM_API_KEY = os.getenv("VLM_API_KEY", "PUT-YOUR-DASHSCOPE-KEY-HERE")
+VLM_API_KEY = os.getenv("VLM_API_KEY", "")
 VLM_MODEL = os.getenv("VLM_MODEL", "qwen3.6-flash")
-VLM_TEMPERATURE = 0.3
-VLM_MAX_TOKENS = 150
+VLM_TEMPERATURE = 0.6
+VLM_MAX_TOKENS = 180
 
 VLM_SYSTEM_PROMPT = """You are a creative structured image recognition backend.
 Analyze the user-provided image and identify the primary object.
@@ -97,7 +97,7 @@ Analyze the user-provided image and identify the primary object.
 {
   "object_name": "1-6 Chinese characters, the precise object name",
   "category": "1-4 Chinese characters, the category (e.g. 水果, 数码, 日用品, 文具, 玩具, 食品, 工具, 运动)",
-  "description": "15-50 Chinese characters. A vivid, interesting sentence about the object: its usage, what makes it special, fun facts, or how people use it. Be creative and vary your answer each time.",
+  "description": "15-50 Chinese characters. Describe it in a way you've never used before: its usage, what makes it special, fun facts, or how people use it. Vary the sentence structure, word choice, and tone every time — sometimes poetic, sometimes factual, sometimes playful.",
   "scene": "2-10 Chinese characters. Briefly describe the scene where this photo was taken, e.g. 书房书桌, 厨房灶台, 客厅茶几, 卧室床头, 办公室工位, 阳台花园."
 }
 """

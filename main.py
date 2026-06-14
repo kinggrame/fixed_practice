@@ -32,6 +32,7 @@ import config
 import identity
 import image_engine
 import image_store
+import oled_ui
 import runtime
 import vlm_client
 
@@ -64,17 +65,11 @@ class GPIOBackend:
     }
 
     _MELODY_SUCCESS = [
-        ("C5", 0.2), ("C5", 0.2), ("G5", 0.2), ("G5", 0.2),
-        ("A5", 0.2), ("A5", 0.2), ("G5", 0.4),
-        ("F5", 0.2), ("F5", 0.2), ("E5", 0.2), ("E5", 0.2),
-        ("D5", 0.2), ("D5", 0.2), ("C5", 0.4),
+        ("C5", 0.12), ("G5", 0.18),
     ]
 
     _MELODY_ERROR = [
-        ("G5", 0.25), ("G5", 0.15), ("F5", 0.15), ("E5", 0.25),
-        ("D5", 0.25), ("E5", 0.15), ("F5", 0.15), ("G5", 0.4),
-        ("C6", 0.25), ("B5", 0.15), ("A5", 0.15), ("G5", 0.25),
-        ("F5", 0.25), ("E5", 0.25), ("D5", 0.25), ("C5", 0.5),
+        ("A4", 0.2), ("_", 0.1), ("A4", 0.3),
     ]
 
     def __init__(self):
@@ -145,6 +140,13 @@ class GPIOBackend:
 
     def _play(self, melody):
         for note_name, dur in melody:
+            if note_name == "_":
+                try:
+                    self._pwm.ChangeDutyCycle(0)
+                except Exception:
+                    pass
+                time.sleep(dur)
+                continue
             freq = self._NOTE.get(note_name, 440)
             try:
                 self._pwm.ChangeFrequency(freq)
@@ -228,6 +230,10 @@ class WiseEyeStateMachine:
         log.info("CAPTURE[%s] light=%s mode=%s", source, light_raw, mode)
         runtime.hub.update_status(state=State.CAPTURE, mode=mode)
 
+        for sec in range(5, 0, -1):
+            oled_ui.show_countdown(sec)
+            time.sleep(1)
+
         try:
             jpeg_path = image_engine.capture_frame()
             with open(jpeg_path, "rb") as f:
@@ -259,11 +265,13 @@ class WiseEyeStateMachine:
         modes = [it["mode"] for it in items]
 
         self.state = State.PROCESS
+        oled_ui.show_process()
         runtime.hub.update_status(state=State.PROCESS)
         log.info("PROCESS %d image(s) via %s", len(jpegs),
                  "BATCH VLM" if is_batch else "single VLM")
 
         self.state = State.THINKING
+        oled_ui.show_thinking()
         runtime.hub.update_status(state=State.THINKING)
         t0 = time.time()
 
@@ -295,6 +303,7 @@ class WiseEyeStateMachine:
                      category, obj_name, description, scene)
             identity.append(scene, obj_name, category, description)
 
+        oled_ui.show_result(results[-1][1], results[-1][0], results[-1][2])
         runtime.hub.update_status(
             state=State.DISPLAY,
             last_object_name=results[-1][0],
@@ -315,6 +324,7 @@ class WiseEyeStateMachine:
     def _go_error(self, msg: str):
         self.state = State.ERROR
         log.error(msg)
+        oled_ui.show_error(msg)
         self.gpio.play_melody("error")
         runtime.hub.update_status(
             state=State.ERROR, error_msg=msg,
@@ -326,6 +336,8 @@ class WiseEyeStateMachine:
     def loop(self):
         log.info("Boot sequence start.")
         image_store.init()
+        oled_ui.self_test()
+        oled_ui.show_ready()
         time.sleep(1.0)
         runtime.hub.update_status(state=State.READY)
         log.info("READY. Buffer-driven mode; waiting for IR ...")
