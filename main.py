@@ -78,7 +78,7 @@ class GPIOBackend:
     ]
 
     def __init__(self):
-        self._ir_event = threading.Event()
+        self._ir_last = 1          # 上次 IR 电平,用于检测下降沿
         self._light_history = deque(maxlen=10)
         self._real = False
         self._pwm = None
@@ -87,34 +87,34 @@ class GPIOBackend:
     def _setup(self):
         try:
             import RPi.GPIO as GPIO
+            GPIO.setwarnings(False)
             GPIO.setmode(GPIO.BCM)
-            GPIO.setup(config.PIN_IR, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+            GPIO.setup(config.PIN_IR, GPIO.IN)
             GPIO.setup(config.PIN_LIGHT, GPIO.IN, pull_up_down=GPIO.PUD_UP)
             GPIO.setup(config.PIN_BUZZER, GPIO.OUT)
             self._pwm = GPIO.PWM(config.PIN_BUZZER, 440)
             self._pwm.start(0)
-            GPIO.add_event_detect(
-                config.PIN_IR,
-                GPIO.FALLING,
-                callback=lambda ch: self._ir_event.set(),
-                bouncetime=200,
-            )
             self._gpio = GPIO
             self._real = True
             log.info("GPIO ready: IR=%s LIGHT=%s BUZZER=%s",
                       config.PIN_IR, config.PIN_LIGHT, config.PIN_BUZZER)
-        except ImportError:
-            log.warning("RPi.GPIO unavailable; running in PC simulation.")
-            self._gpio = None
         except Exception as e:
             log.warning("GPIO init failed (%s); running in PC simulation.", e)
             self._gpio = None
 
-    def wait_ir(self, timeout: float) -> bool:
-        return self._ir_event.wait(timeout=timeout)
-
-    def clear_ir(self):
-        self._ir_event.clear()
+    def poll_ir(self) -> bool:
+        """轮询检测下降沿 (1→0),返回 True 表示触发。"""
+        if not self._real:
+            return False
+        try:
+            cur = self._gpio.input(config.PIN_IR)
+            if self._ir_last == 1 and cur == 0:
+                self._ir_last = cur
+                return True
+            self._ir_last = cur
+        except Exception:
+            pass
+        return False
 
     def read_ir(self) -> int:
         if self._real:
@@ -338,10 +338,8 @@ class WiseEyeStateMachine:
 
         try:
             while not runtime.hub.stop.is_set():
-                if self.gpio.wait_ir(timeout=0.05):
-                    self.gpio.clear_ir()
-                    if self.gpio.read_ir() == 0:
-                        self._capture_one(source="IR")
+                if self.gpio.poll_ir():
+                    self._capture_one(source="IR")
 
                 if runtime.hub.manual_trigger.is_set():
                     runtime.hub.manual_trigger.clear()
