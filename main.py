@@ -230,9 +230,35 @@ class WiseEyeStateMachine:
         log.info("CAPTURE[%s] light=%s mode=%s", source, light_raw, mode)
         runtime.hub.update_status(state=State.CAPTURE, mode=mode)
 
-        for sec in range(5, 0, -1):
-            oled_ui.show_countdown(sec)
-            time.sleep(1)
+        try:
+            jpeg_path = image_engine.capture_frame()
+            with open(jpeg_path, "rb") as f:
+                raw = f.read()
+            try:
+                os.remove(jpeg_path)
+            except OSError:
+                pass
+            enh_mode = resolve_enhancement(mode)
+            enhanced = apply_enhancement(raw, enh_mode)
+            del raw
+        except Exception as e:
+            log.exception("Capture failed")
+            self._go_error(f"Cam:{e.__class__.__name__}")
+            return
+
+        runtime.hub.buffer_push(enhanced, mode, light_raw)
+        log.info("Pushed to buffer (size=%d).", runtime.hub.buffer_len())
+
+        # 倒计时: 视觉反馈,IR 再次触发就递归抓拍下一张
+        remaining = 5
+        while remaining > 0:
+            oled_ui.show_countdown(remaining)
+            for _ in range(10):
+                if self.gpio.poll_ir():
+                    self._capture_one(source="IR")
+                    return
+                time.sleep(0.1)
+            remaining -= 1
 
         try:
             jpeg_path = image_engine.capture_frame()
