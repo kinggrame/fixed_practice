@@ -13,6 +13,7 @@ import subprocess
 from PIL import Image, ImageFilter
 
 import config
+import runtime
 
 
 # ----------------------------------------------------------------------
@@ -20,13 +21,16 @@ import config
 # ----------------------------------------------------------------------
 def capture_frame(out_path: str = config.CAPTURE_PATH) -> str:
     """
-    通过 ffmpeg 从 UVC 摄像头抓一帧 640x480 的 JPEG。
-    关键点(针对 1GB 树莓派):
-      - 锁定 -video_size 640x480: 避免摄像头默认 1080p YUYV(单帧 4MB+) 导致 OOM
-      - -input_format mjpeg 可选: 部分 UVC 不暴露 MJPEG,设为空则自协商
-      - -q:v 5: JPEG 质量压低,单帧约 50KB,上传带宽/内存最友好
-      - -update 1: 单文件覆写,防 image2 序列模式
-      - -an -fflags nobuffer -hide_banner -loglevel error: 静默、低延迟、无音轨
+    通过 ffmpeg 从 UVC 摄像头抓一帧 JPEG。
+
+    默认命令等价于 (用户确认的):
+      ffmpeg -hide_banner -loglevel error -y -f v4l2
+             -i /dev/video0 -frames:v 1 -update 1 <out_path>
+
+    可选参数 (通过环境变量启用):
+      - CAPTURE_W/H > 0    -> 追加 -video_size WxH
+      - CAMERA_INPUT_FORMAT -> 追加 -input_format <fmt>
+      - CAPTURE_JPEG_QUALITY > 0 -> 追加 -q:v <n>
     """
     if os.path.exists(out_path):
         try:
@@ -36,23 +40,28 @@ def capture_frame(out_path: str = config.CAPTURE_PATH) -> str:
 
     cmd = [
         "ffmpeg",
-        "-hide_banner",           # 不打印版本横幅
-        "-loglevel", "error",     # 只输出错误
-        "-y",                     # 覆盖输出
+        "-hide_banner",
+        "-loglevel", "error",
+        "-y",
         "-f", "v4l2",
-        "-video_size", f"{config.CAPTURE_W}x{config.CAPTURE_H}",
-        "-fflags", "nobuffer",    # 降低缓冲延迟
-        "-an",                    # 不要音频流
+        "-fflags", "nobuffer",
+        "-an",
     ]
-    # 摄像头像素格式: mjpeg(默认,体积小) / yuyv422(兼容) / 留空则自协商
-    if config.CAMERA_INPUT_FORMAT:
-        cmd += ["-input_format", config.CAMERA_INPUT_FORMAT]
+    # 从运行时读取拍摄参数 (前端热改立即生效)
+    cp = runtime.hub.cfg
+    if cp.capture_width > 0 and cp.capture_height > 0:
+        cmd += ["-video_size", f"{cp.capture_width}x{cp.capture_height}"]
+    if cp.capture_input_format:
+        cmd += ["-input_format", cp.capture_input_format]
 
     cmd += [
         "-i", config.CAMERA_DEVICE,
         "-frames:v", "1",
-        "-q:v", str(config.CAPTURE_JPEG_QUALITY),
-        "-update", "1",           # 单文件覆写,防 image2 序列模式
+    ]
+    if cp.capture_jpeg_quality > 0:
+        cmd += ["-q:v", str(cp.capture_jpeg_quality)]
+    cmd += [
+        "-update", "1",
         out_path,
     ]
 

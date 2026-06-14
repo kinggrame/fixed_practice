@@ -18,6 +18,7 @@ from flask import (
 )
 
 import config
+import identity
 import image_store
 import runtime
 
@@ -112,13 +113,23 @@ def create_app() -> Flask:
             n = 100
         return jsonify({"ok": True, "data": runtime.hub.tail_logs(n)})
 
-    # ---- API: 手动触发 ----
+    # ---- API: 手动触发 (始终入队,不阻塞) ----
     @app.route("/api/trigger", methods=["POST"])
     def api_trigger():
-        if runtime.hub.status.state == "READY":
-            runtime.hub.manual_trigger.set()
-            return jsonify({"ok": True, "msg": "triggered"})
-        return jsonify({"ok": False, "err": f"busy: {runtime.hub.status.state}"}), 409
+        runtime.hub.manual_trigger.set()
+        return jsonify({"ok": True, "msg": "triggered (enqueued)"})
+
+    # ---- API: 缓冲区缩略图快照 ----
+    @app.route("/api/buffer")
+    def api_buffer():
+        items = runtime.hub.buffer_snapshot()
+        return jsonify({"ok": True, "data": items})
+
+    # ---- API: 身份画像 ----
+    @app.route("/api/identity")
+    def api_identity():
+        content = identity.load()
+        return jsonify({"ok": True, "data": content or "# 用户身份画像\n\n尚未建立画像,等待首次识别。"})
 
     # ---- API: 简易统计 ----
     @app.route("/api/stats")

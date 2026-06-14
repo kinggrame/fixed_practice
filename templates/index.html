@@ -41,8 +41,8 @@
         <section v-show="tab === 'dashboard'" class="panel">
           <div class="panel-head">
             <h2>实时状态</h2>
-            <button class="btn primary" :disabled="!canTrigger" @click="trigger">
-              {{ canTrigger ? '手动触发识别' : '忙: ' + state.state }}
+            <button class="btn primary" @click="trigger">
+              {{ isBusy ? '入队 (' + bufferItems.length + '+' + ')' : '手动触发识别' }}
             </button>
           </div>
 
@@ -54,6 +54,7 @@
               </div>
               <div class="kv">
                 <div><span>环境模式</span><b :class="state.mode === 'NIGHT' ? 'warn' : 'ok'">{{ state.mode || '--' }}</b></div>
+                <div><span>缓冲数</span><b>{{ bufferItems.length }} / 5</b></div>
                 <div><span>错误</span><b class="err">{{ state.error_msg || '无' }}</b></div>
                 <div><span>最近更新</span><b>{{ formatTime(state.last_update) }}</b></div>
               </div>
@@ -63,6 +64,7 @@
               <div class="card-title">最近一次识别</div>
               <div class="result-name">{{ state.last_object_name || '—' }}</div>
               <div class="result-cat">分类: {{ state.last_category || '—' }}</div>
+              <div class="result-desc" v-if="state.last_description">{{ state.last_description }}</div>
               <div class="kv">
                 <div><span>延迟</span><b>{{ state.last_latency_ms }} ms</b></div>
                 <div><span>图像</span>
@@ -95,10 +97,44 @@
                 <div><span>去抖</span><b>{{ cfg.light_debounce_ms }} ms</b></div>
                 <div><span>增强</span><b>{{ cfg.enhancement_mode }}</b></div>
                 <div><span>保存图像</span><b>{{ cfg.save_image ? '是' : '否' }}</b></div>
+                <div><span>分辨率</span><b>{{ cfg.capture_width > 0 ? cfg.capture_width + 'x' + cfg.capture_height : '默认' }}</b></div>
+                <div><span>格式</span><b>{{ cfg.capture_input_format || '自协商' }}</b></div>
+                <div><span>JPEG 质量</span><b>{{ cfg.capture_jpeg_quality > 0 ? cfg.capture_jpeg_quality : '默认' }}</b></div>
                 <div><span>模型</span><b>{{ cfg.vlm_model }}</b></div>
               </div>
             </div>
           </div>
+
+          <!-- 缓冲区队列 -->
+          <div class="card buffer-card">
+            <div class="card-title">
+              缓冲区队列
+              <span class="badge" :class="bufferItems.length > 0 ? 'ok' : ''">{{ bufferItems.length }} / 5</span>
+            </div>
+            <div v-if="bufferItems.length === 0 && !isProcessing" class="empty">队列为空</div>
+            <div v-if="bufferItems.length === 0 && isProcessing" class="empty processing-hint">已全部取出,正在 AI 分析…</div>
+            <div v-else class="buffer-queue">
+              <div v-for="(item, i) in bufferItems" :key="i" class="b-item">
+                <img :src="item.thumb" class="b-thumb" />
+                <div class="b-meta">
+                  <span class="bmode" :class="item.mode === 'NIGHT' ? 'warn' : 'ok'">{{ item.mode }}</span>
+                  <span class="bts">{{ shortTime(item.ts) }}</span>
+                </div>
+                <div class="b-status">排队中 ({{ i + 1 }})</div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ========== Identity ========== -->
+        <section v-show="tab === 'identity'" class="panel">
+          <div class="panel-head">
+            <h2>用户身份画像</h2>
+            <div class="head-tools">
+              <button class="btn" @click="pollIdentity">刷新</button>
+            </div>
+          </div>
+          <div class="identity-md">{{ identityMd }}</div>
         </section>
 
         <!-- ========== Gallery ========== -->
@@ -131,6 +167,7 @@
               <div class="ginfo">
                 <div class="gname">{{ img.object_name || '—' }}</div>
                 <div class="gcat">{{ img.category || '—' }}</div>
+                <div class="gdesc" v-if="img.description">{{ img.description }}</div>
                 <div class="gmeta">{{ formatTime(img.timestamp) }} · {{ img.latency_ms || 0 }}ms</div>
               </div>
               <button class="del" title="删除" @click.stop="delImage(img)">×</button>
@@ -195,7 +232,31 @@
             </fieldset>
 
             <fieldset>
-              <legend>云端 VLM (默认 Qwen-VL-Plus)</legend>
+              <legend>拍摄参数 (0=摄像头默认)</legend>
+              <div class="row">
+                <label>宽度</label>
+                <input type="number" v-model.number="cfg.capture_width" min="0" step="8" placeholder="0=不强制" />
+                <span class="hint">像素,0=不强制(摄像头自协商)。640 可防 OOM</span>
+              </div>
+              <div class="row">
+                <label>高度</label>
+                <input type="number" v-model.number="cfg.capture_height" min="0" step="8" placeholder="0=不强制" />
+                <span class="hint">像素,与宽度配对应同时设为 0 或同时设正值</span>
+              </div>
+              <div class="row">
+                <label>像素格式</label>
+                <input type="text" v-model="cfg.capture_input_format" placeholder="留空=自协商" />
+                <span class="hint">mjpeg / yuyv422 / 空=ffmpeg 自协商</span>
+              </div>
+              <div class="row">
+                <label>JPEG 质量</label>
+                <input type="number" v-model.number="cfg.capture_jpeg_quality" min="0" max="31" placeholder="0=ffmpeg默认" />
+                <span class="hint">ffmpeg -q:v 参数,1(最好)~31(最差);0=ffmpeg 默认</span>
+              </div>
+            </fieldset>
+
+            <fieldset>
+              <legend>云端 VLM</legend>
               <div class="row">
                 <label>API Base</label>
                 <input type="text" v-model="cfg.vlm_api_base" placeholder="https://dashscope.aliyuncs.com/compatible-mode/v1" />
@@ -242,9 +303,10 @@
       <div class="modal-body">
         <button class="modal-close" @click="modal = null">×</button>
         <img :src="modal.url" alt="full" />
-        <div class="modal-info">
-          <div class="rname">{{ modal.object_name || '—' }}</div>
-          <div class="rcat">分类: {{ modal.category || '—' }}</div>
+          <div class="modal-info">
+            <div class="rname">{{ modal.object_name || '—' }}</div>
+            <div class="rcat">分类: {{ modal.category || '—' }}</div>
+            <div class="rdesc" v-if="modal.description">{{ modal.description }}</div>
           <div class="kv">
             <div><span>时间</span><b>{{ formatTime(modal.timestamp) }}</b></div>
             <div><span>模式</span><b>{{ modal.mode }}</b></div>

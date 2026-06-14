@@ -25,9 +25,15 @@ import config
 @dataclass
 class RuntimeConfig:
     light_policy: str = config.DEFAULT_LIGHT_POLICY          # AUTO/FORCE_DAY/FORCE_NIGHT
-    light_debounce_ms: int = config.DEFAULT_LIGHT_DEBOUNCE_MS  # DO 去抖窗口(ms),阈值在硬件电位器
+    light_debounce_ms: int = config.DEFAULT_LIGHT_DEBOUNCE_MS  # DO 去抖窗口(ms)
     enhancement_mode: str = config.DEFAULT_ENHANCEMENT_MODE  # AUTO/DAY/NIGHT/OFF
     save_image: bool = config.DEFAULT_SAVE_IMAGE
+    # 拍摄参数 (前端可热改,立即生效)
+    capture_width: int = config.CAPTURE_W
+    capture_height: int = config.CAPTURE_H
+    capture_input_format: str = config.CAMERA_INPUT_FORMAT
+    capture_jpeg_quality: int = config.CAPTURE_JPEG_QUALITY
+    # VLM
     vlm_api_base: str = config.VLM_API_BASE
     vlm_api_key: str = config.VLM_API_KEY
     vlm_model: str = config.VLM_MODEL
@@ -42,6 +48,7 @@ class SystemStatus:
     mode: str = "DAY"                    # 最近的 DAY/NIGHT
     last_object_name: str = ""
     last_category: str = ""
+    last_description: str = ""           # 生动描述 (来自 VLM)
     last_image_id: Optional[str] = None
     last_latency_ms: int = 0
     last_update: float = 0.0
@@ -51,6 +58,8 @@ class SystemStatus:
     capture_error: int = 0
     # 最近 N 条日志行 (level + msg + time)
     logs: Deque[Dict[str, Any]] = field(default_factory=lambda: deque(maxlen=config.LOG_RING_SIZE))
+    # 图像缓冲区 (批处理队列,list of dict)
+    image_buffer: List[Dict[str, Any]] = field(default_factory=list)
 
 
 # ----------------------------------------------------------------------
@@ -74,6 +83,7 @@ class _Hub:
                 "mode": s.mode,
                 "last_object_name": s.last_object_name,
                 "last_category": s.last_category,
+                "last_description": s.last_description,
                 "last_image_id": s.last_image_id,
                 "last_latency_ms": s.last_latency_ms,
                 "last_update": s.last_update,
@@ -81,6 +91,7 @@ class _Hub:
                 "capture_total": s.capture_total,
                 "capture_success": s.capture_success,
                 "capture_error": s.capture_error,
+                "buffer_len": len(s.image_buffer),
             }
 
     def update_status(self, **kwargs):
@@ -122,6 +133,57 @@ class _Hub:
                         v = str(v) if v is not None else cur
                     setattr(self.cfg, k, v)
             return asdict(self.cfg)
+
+    # ----- 缓冲区队列管理 -----
+    def buffer_push(self, jpeg_bytes: bytes, mode: str, light_raw: int):
+        thumb = _make_thumb(jpeg_bytes)
+        with self._lock:
+            q = self.status.image_buffer
+            q.append({"bytes": jpeg_bytes, "mode": mode, "light_raw": light_raw,
+                       "ts": time.time(), "thumb": thumb})
+            if len(q) > config.BUFFER_MAX_SIZE:
+                q.pop(0)
+
+    def buffer_pop(self, count: int = 1) -> List[Dict[str, Any]]:
+        with self._lock:
+            q = self.status.image_buffer
+            items = q[:count]
+            q[:count] = []
+            return items
+
+    def buffer_snapshot(self, max_items: int = 5) -> List[Dict[str, Any]]:
+        """返回缓冲区缩略信息（不含原始字节）,供前端展示。"""
+        with self._lock:
+            return [
+                {"mode": it["mode"], "light_raw": it["light_raw"],
+                 "ts": it["ts"], "thumb": it.get("thumb")}
+                for it in list(self.status.image_buffer)[:max_items]
+            ]
+
+    def buffer_peek(self) -> List[Dict[str, Any]]:
+        with self._lock:
+            return list(self.status.image_buffer)
+
+    def buffer_len(self) -> int:
+        with self._lock:
+            return len(self.status.image_buffer)
+
+
+def _make_thumb(jpeg_bytes: bytes, max_width: int = 160) -> Optional[str]:
+    """快速生成缩略图 base64 data URL,失败返回 None。"""
+    try:
+        from io import BytesIO
+        from PIL import Image
+        import base64
+        with Image.open(BytesIO(jpeg_bytes)) as img:
+            w = min(max_width, img.width)
+            h = int(img.height * w / img.width)
+            img.thumbnail((w, h), Image.LANCZOS)
+            buf = BytesIO()
+            img.save(buf, "JPEG", quality=60)
+            return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
+    except Exception:
+        return None
 
 
 hub = _Hub()

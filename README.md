@@ -79,34 +79,33 @@ POST /api/trigger            # 手动触发
 
 ## 关键配置说明
 
-| 参数 | 说明 | 典型值 |
+| 参数 | 说明 | 默认值 |
 |------|------|--------|
-| `CAMERA_INPUT_FORMAT` | 摄像头像素格式。`mjpeg`(默认,内存友好) / `yuyv422`(兼容好) / 留空自协商。部分 UVC 不暴露 MJPEG 需改 yuyv422 | `mjpeg` |
-| `CAPTURE_W` / `CAPTURE_H` | **必须锁小分辨率**。不指定时 uvc 常默认 1080p YUYV(单帧 4MB+),1GB Pi 直接 OOM | 640 / 480 |
-| `CAPTURE_JPEG_QUALITY` | ffmpeg `-q:v` 参数,1(最高)~31(最差)。VLM 识别 5 足够且体积最小 | 5 |
+| `CAMERA_INPUT_FORMAT` | 摄像头像素格式。`mjpeg` / `yuyv422` / 留空则自协商(兼容最好) | `""`(空) |
+| `CAPTURE_W` / `CAPTURE_H` | 强制分辨率;0=不强制(用摄像头默认)。摄像头默认 1080p YUYV 时单帧 4MB+,1GB Pi 可能 OOM,建议设 `640x480` | 0 / 0 |
+| `CAPTURE_JPEG_QUALITY` | ffmpeg `-q:v` 质量 1(最高)~31(最差);0=ffmpeg 默认 | 0 |
 | `light_policy` | AUTO(读 DO) / FORCE_DAY / FORCE_NIGHT。**阈值在硬件电位器**调节,软件只能读/去抖/覆盖 | AUTO |
 | `light_debounce_ms` | DO 去抖窗口(毫秒)。多数表决防临界光线抖动 | 300 |
 | `enhancement_mode` | AUTO(环境自适应) / DAY(仅降噪) / NIGHT(Gamma 0.5) / OFF(关) | AUTO |
 
 ## ffmpeg 抓拍命令参考
 
-当前 `image_engine.py` 实际执行的命令 (等价于):
+当前 `image_engine.py` 实际执行的命令 (默认):
 
 ```bash
-ffmpeg \
-  -hide_banner -loglevel error -y \
-  -f v4l2 \
-  -video_size 640x480 \
-  -fflags nobuffer -an \
-  -input_format mjpeg \
-  -i /dev/video0 \
-  -frames:v 1 \
-  -q:v 5 \
-  -update 1 \
-  /tmp/wise_eye_capture.jpg
+ffmpeg -hide_banner -loglevel error -y -f v4l2 \
+       -fflags nobuffer -an \
+       -i /dev/video0 -frames:v 1 \
+       -update 1 /tmp/wise_eye_capture.jpg
 ```
 
-如果摄像头不支持 MJPEG,设置 `export CAMERA_INPUT_FORMAT=""` 去掉 `-input_format` 参数即可。
+若要锁分辨率 / 显式指定格式 / 调整 JPEG 质量,通过环境变量:
+
+```bash
+export CAMERA_INPUT_FORMAT=mjpeg                   # 强制 MJPEG
+export CAPTURE_W=640 CAPTURE_H=480                 # 降分辨率 (1GB Pi 防 OOM)
+export CAPTURE_JPEG_QUALITY=5                      # 降低质量压体积
+```
 
 ## 内存策略 (1GB 约束)
 

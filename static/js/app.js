@@ -1,6 +1,6 @@
 /* =========================================================
    智慧眼 · 前端逻辑
-   - 状态轮询: state / logs (2s/1s)
+   - 状态轮询: state / logs / buffer (2s/1s/2s)
    - 图库: 懒加载分页
    - 配置: 一键保存 (热生效,无需重启)
    ========================================================= */
@@ -12,6 +12,7 @@ createApp({
     const tab = ref('dashboard');
     const tabs = [
       { key: 'dashboard', label: '实时状态', icon: '◉' },
+      { key: 'identity',  label: '身份画像', icon: '👤' },
       { key: 'gallery',   label: '历史图库', icon: '▦' },
       { key: 'config',    label: '运行配置', icon: '⚙' },
       { key: 'logs',      label: '实时日志', icon: '☰' },
@@ -21,6 +22,8 @@ createApp({
     const now = ref('');
     const state = ref({});
     const cfg = ref({});
+    const bufferItems = ref([]);
+    const identityMd = ref('');
     const toast = ref(null);
     function showToast(msg, type = 'ok', ms = 2000) {
       toast.value = { msg, type };
@@ -41,6 +44,20 @@ createApp({
         online.value = false;
       }
     }
+    async function pollBuffer() {
+      try {
+        const r = await fetch('/api/buffer');
+        const j = await r.json();
+        if (j.ok) bufferItems.value = j.data || [];
+      } catch (_) {}
+    }
+    async function pollIdentity() {
+      try {
+        const r = await fetch('/api/identity');
+        const j = await r.json();
+        if (j.ok) identityMd.value = j.data || '';
+      } catch (_) {}
+    }
     function tickClock() {
       const d = new Date();
       const p = n => String(n).padStart(2, '0');
@@ -48,15 +65,27 @@ createApp({
     }
 
     // ---------- 状态显示 ----------
+    const isProcessing = computed(() => {
+      const s = state.value.state;
+      return s === 'CAPTURE' || s === 'PROCESS' || s === 'THINKING' || s === 'DISPLAY';
+    });
+    const isBusy = computed(() => isProcessing.value);
     const stateLabel = computed(() => {
       const m = {
-        READY: '待机 READY', CAPTURE: '抓拍中 CAPTURE', PROCESS: '图像增强',
-        THINKING: 'AI 识别中', DISPLAY: '结果展示', ERROR: '错误',
+        READY: '待机 READY',
+        CAPTURE: '📷 抓拍中…',
+        PROCESS: '🖼 图像增强…',
+        THINKING: '🧠 AI 识别中…',
+        DISPLAY: '📋 结果展示',
+        ERROR: '⚠️ 错误',
       };
-      return m[state.value.state] || (state.value.state || 'INIT');
+      const label = m[state.value.state] || (state.value.state || 'INIT');
+      if (state.value.state === 'READY' && bufferItems.value.length > 0) {
+        return `⏳ 待消费 (${bufferItems.value.length} 张)`;
+      }
+      return label;
     });
     const stateClass = computed(() => 's-' + (state.value.state || 'READY'));
-    const canTrigger = computed(() => state.value.state === 'READY');
 
     function formatTime(ts) {
       if (!ts) return '--';
@@ -64,13 +93,19 @@ createApp({
       const p = n => String(n).padStart(2, '0');
       return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
     }
+    function shortTime(ts) {
+      if (!ts) return '--';
+      const d = new Date(ts > 1e12 ? ts : ts * 1000);
+      const p = n => String(n).padStart(2, '0');
+      return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+    }
 
     // ---------- 手动触发 ----------
     async function trigger() {
       try {
         const r = await fetch('/api/trigger', { method: 'POST' });
         const j = await r.json();
-        if (j.ok) showToast('已触发,识别中...');
+        if (j.ok) showToast('已入队,等待处理…');
         else showToast(j.err || '失败', 'err');
       } catch (e) {
         showToast('网络错误: ' + e.message, 'err');
@@ -138,16 +173,13 @@ createApp({
       const j = await r.json();
       if (!j.ok) return;
       const lines = j.data || [];
-      // 增量追加
       if (lines.length < lastLogIdx) {
-        // 服务端清空了,重置
         logLines.value = lines;
         lastLogIdx = 0;
       } else if (lines.length > lastLogIdx) {
         const inc = lines.slice(lastLogIdx);
         logLines.value = logLines.value.concat(inc);
         lastLogIdx = lines.length;
-        // 防止内存膨胀
         if (logLines.value.length > 1000) logLines.value = logLines.value.slice(-500);
         if (logAuto.value) {
           nextTick(() => {
@@ -162,6 +194,8 @@ createApp({
     onMounted(() => {
       tickClock(); setInterval(tickClock, 1000);
       pollState(); stateTimer = setInterval(pollState, 2000);
+      pollBuffer(); setInterval(pollBuffer, 2000);
+      pollIdentity(); setInterval(pollIdentity, 5000);
       loadConfig();
       loadPage(1);
       pollLogs(); logTimer = setInterval(pollLogs, 1000);
@@ -170,12 +204,11 @@ createApp({
       clearInterval(stateTimer); clearInterval(clockTimer); clearInterval(logTimer);
     });
 
-    // 切到图库时刷新
     watch(tab, (v) => { if (v === 'gallery') loadPage(gallery.value.page); });
 
     return {
-      tab, tabs, online, now, state,
-      stateLabel, stateClass, canTrigger, formatTime,
+      tab, tabs, online, now, state, bufferItems, identityMd,
+      stateLabel, stateClass, isBusy, isProcessing, formatTime, shortTime,
       trigger,
       gallery, galleryStatus, reloadGallery, loadPage, modal, openImage, delImage,
       cfg, loadConfig, saveConfig,

@@ -135,7 +135,7 @@ def show_thinking():
     _gui(_draw)
 
 
-def show_result(category: str, name: str):
+def show_result(category: str, name: str, description: str = ""):
     def _draw(draw, fs, fb):
         draw.rectangle((0, 0, config.OLED_WIDTH - 1, config.OLED_HEIGHT - 1), outline=1)
         draw.line([(0, 16), (config.OLED_WIDTH - 1, 16)], fill=1)
@@ -147,7 +147,16 @@ def show_result(category: str, name: str):
         except Exception:
             text_w = len(name) * config.FONT_SIZE_BIG
         x = max(2, (config.OLED_WIDTH - text_w) // 2)
-        draw.text((x, 24), name, font=fb, fill=1)
+        draw.text((x, 22), name, font=fb, fill=1)
+        if description:
+            # 底部一行生动描述 (小字)
+            desc = description[:20]
+            try:
+                db = draw.textbbox((0, 0), desc, font=fs)
+                dx = max(2, (config.OLED_WIDTH - (db[2] - db[0])) // 2)
+            except Exception:
+                dx = 2
+            draw.text((dx, 50), desc, font=fs, fill=1)
     _gui(_draw)
 
 

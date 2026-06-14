@@ -50,6 +50,11 @@ def init():
             CREATE INDEX IF NOT EXISTS idx_status    ON captures(status);
             """
         )
+        # 迁移: 低版本 DB 缺少 description 列,补上去
+        try:
+            _conn.execute("ALTER TABLE captures ADD COLUMN description TEXT DEFAULT ''")
+        except sqlite3.OperationalError:
+            pass
     _cleanup()
 
 
@@ -81,12 +86,12 @@ def save(jpeg_bytes: bytes, mode: str) -> str:
     return img_id
 
 
-def update_result(img_id: str, obj_name: str, category: str, latency_ms: int):
+def update_result(img_id: str, obj_name: str, category: str, description: str, latency_ms: int):
     with _lock:
         _conn.execute(
-            "UPDATE captures SET object_name=?, category=?, latency_ms=?, status=? "
+            "UPDATE captures SET object_name=?, category=?, description=?, latency_ms=?, status=? "
             "WHERE id=?",
-            (obj_name, category, latency_ms, "success", img_id),
+            (obj_name, category, description, latency_ms, "success", img_id),
         )
 
 
@@ -131,7 +136,7 @@ def list_images(page: int = 1, per_page: int = 20, status: Optional[str] = None)
     params = (status, per_page, offset) if status else (per_page, offset)
     with _lock:
         rows = _conn.execute(
-            f"SELECT id, timestamp, mode, object_name, category, file_size, latency_ms, status "
+            f"SELECT id, timestamp, mode, object_name, category, description, file_size, latency_ms, status "
             f"FROM captures {where} ORDER BY timestamp DESC LIMIT ? OFFSET ?",
             params,
         ).fetchall()
@@ -146,9 +151,10 @@ def list_images(page: int = 1, per_page: int = 20, status: Optional[str] = None)
             "mode": r[2],
             "object_name": r[3] or "",
             "category": r[4] or "",
-            "file_size": r[5],
-            "latency_ms": r[6],
-            "status": r[7],
+            "description": r[5] or "",
+            "file_size": r[6],
+            "latency_ms": r[7],
+            "status": r[8],
             "url": f"/api/images/{r[0]}/file",
         }
         for r in rows
